@@ -7,16 +7,53 @@ class Server
 	function __construct($allowedMethods = null)
 	{
 		$this->allowedMethods = $allowedMethods;
-		$this->instanceCache = array();
+		$this->instanceCache = new InstanceCache();
 	}
 
-	function listen($segment = '/gateway')
+	function get($segment,$callback)
 	{
-		$path = isset($_SERVER['PATH_INFO'])? $_SERVER['PATH_INFO'] : $_SERVER['REQUEST_URI'];
-		if($segment == $path)
+		if(Router::match($segment,'GET'))
 		{
-			$this->json_response($this->process());
+			$response = call_user_func($callback);
+			$this->response($response);
 		}
+	}
+
+	function post($segment,$callback)
+	{
+		if(Router::match($segment,'POST'))
+		{
+			$response = call_user_func($callback);
+			$this->response($response);
+		}
+	}
+
+	function listen($segment='/',$js='/classes')
+	{
+		$this->post($segment,function(){
+			try
+			{
+				$result = $this->process();
+				return new JSONResponse($result);
+			}
+			catch (HttpException $e)
+			{
+				return new JSONResponse($e->getMessage(), $e->getCode());
+			}
+			catch (ReflectionException $e)
+			{
+				return new JSONResponse($e->getMessage(), 403);
+			}
+			catch (Exception $e)
+			{
+				return new JSONResponse($e->getMessage(), 500);
+			}
+		});
+
+		$this->get($js,function(){
+			$result = $this->getClasses();
+			return new JavaScriptResponse($result);
+		});
 	}
 
 	function process()
@@ -31,18 +68,6 @@ class Server
 		return $result;
 	}
 
-	function cacheInstance($instance,$classname,$constructArgs)
-	{
-		$key = md5(json_encode(array($classname,$constructArgs)));
-		$this->instanceCache[$key] = $instance;
-	}
-
-	function getInstanceFromCache($classname,$constructArgs)
-	{
-		$key = md5(json_encode(array($classname,$constructArgs)));
-		return isset($this->instanceCache[$key])? $this->instanceCache[$key] : null;
-	}
-
 	function call($classname,$method,$args,$constructArgs)
 	{
 		is_array($constructArgs) or $constructArgs = array();
@@ -50,15 +75,15 @@ class Server
 		{
 			if(!isset($this->allowedMethods[$classname]))
 			{
-				$this->json_response("$classname",403);
+				throw new HttpException("$classname not found",404);
 			}
 			if(!('*' == $this->allowedMethods[$classname]) and !in_array($method,$this->allowedMethods[$classname]))
 			{
-				$this->json_response("$classname->$method",403);
+				throw new HttpException("$classname->$method not found",404);
 			}
 		}
 
-		$cachedInstance = $this->getInstanceFromCache($classname,$constructArgs);
+		$cachedInstance = $this->instanceCache->getInstanceFromCache($classname,$constructArgs);
 		if($cachedInstance)
 		{
 			if(is_callable(array($cachedInstance,$method)))
@@ -67,39 +92,53 @@ class Server
 			}
 			else
 			{
-				$this->json_response("$classname->$method not callable",403);;
+				throw new HttpException("$classname->$method not callable",403);
 			}
 		}
 
-		try
+		$classnameReflection = new \ReflectionClass($classname);
+		$methodReflection = $classnameReflection->getMethod($method);
+		if($methodReflection->isStatic())
 		{
-			$classnameReflection = new \ReflectionClass($classname);
-			$methodReflection = $classnameReflection->getMethod($method);
-			if($methodReflection->isStatic())
-			{
-				return $methodReflection->invokeArgs(null,$args);
-			}
-			else if($methodReflection->isPublic())
-			{
-				$instance = $classnameReflection->newInstanceArgs($constructArgs);
-				$this->cacheInstance($instance,$classname,$constructArgs);
-				return $methodReflection->invokeArgs($instance,$args);
-			}
-			$this->json_response("$classname->$method is not public",403);;
+			return $methodReflection->invokeArgs(null,$args);
 		}
-		catch (ReflectionException $e)
+		else if($methodReflection->isPublic())
 		{
-			return $e->getMessage();
+			$instance = $classnameReflection->newInstanceArgs($constructArgs);
+			$this->instanceCache->cacheInstance($instance,$classname,$constructArgs);
+			return $methodReflection->invokeArgs($instance,$args);
 		}
+		throw new HttpException("$classname->$method is not public",403);
 	}
 
-	function json_response($data,$http_code = 200){
-		is_numeric($http_code) or $http_code = 200;
-		$output = json_encode($data);
-		header('HTTP/1.1: ' . $http_code);
-		header('Status: ' . $http_code);
-		header('Content-Type: application/json');
-		exit($output);
+	function getClasses($namespace='classes')
+	{
+		$js = '';
+		foreach($this->allowedMethods as $classname=>$methods)
+		{
+			$classReflection = new \ReflectionClass($classname);
+			$publicMethods = $classReflection->getMethods(\ReflectionMethod::IS_PUBLIC);
+			$staticMethods = $classReflection->getMethods(\ReflectionMethod::IS_STATIC);
+			$staticMethods = array_map(function($x){return $x->name;},$staticMethods);
+			$publicMethods = array_map(function($x){return $x->name;},$publicMethods);
+			$publicMethods = array_filter($publicMethods,function($x){return substr($x,0,2) != '__';});
+
+			$staticMethods = array_intersect($publicMethods,$staticMethods);
+			$nonStaticMethods = array_diff($publicMethods,$staticMethods);
+
+			if($methods != '*')
+			{
+				$nonStaticMethods = array_intersect($nonStaticMethods,$methods);
+				$staticMethods = array_intersect($staticMethods,$methods);
+			}
+			$js .= "ns.$classname=invoker.getClass({name:'$classname',staticMethods:['".implode("','",$staticMethods)."'],methods:['".implode("','",$nonStaticMethods)."']});";
+		}
+		return '(function(){ns={};'.$js."this.$namespace=ns})()";
+	}
+
+	function response($response)
+	{
+		Response::send($response);
 	}
 
 }

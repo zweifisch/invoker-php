@@ -9,5 +9,14 @@ install using [composer](http://getcomposer.org/)
 }
 ```
 
-usage and tests see [invoker](https://github.com/zweifisch/invoker)
+usage see [invoker](https://github.com/zweifisch/invoker)
 
+## test
+
+```sh
+cd test
+composer install
+php -S localhost:1212 index.php
+```
+
+visit http://localhost:1212
