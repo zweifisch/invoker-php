@@ -28,8 +28,13 @@ class Server
 		}
 	}
 
-	function listen($segment='/',$js='/classes')
+	function listen($options=array())
 	{
+		$segment = isset($options['gateway'])? $options['gateway'] : '/';
+		$classes = isset($options['classes'])? $options['classes'] : '/classes';
+		$script = isset($options['script'])? $options['script'] : '/script';
+		$namespace = isset($options['namespace'])? $options['namespace'] : 'classes';
+
 		$this->post($segment,function(){
 			try
 			{
@@ -50,8 +55,15 @@ class Server
 			}
 		});
 
-		$this->get($js,function(){
-			$result = $this->getClasses();
+		$host = $this; # for php < 5.4
+
+		$this->get($classes,function() use ($host,$namespace){
+			$result = $this->getClasses($namespace);
+			return new JavaScriptResponse($result);
+		});
+
+		$this->get($script,function() use ($host,$namespace){
+			$result = $this->getScript($namespace);
 			return new JavaScriptResponse($result);
 		});
 	}
@@ -59,6 +71,10 @@ class Server
 	function process()
 	{
 		$calls = json_decode(file_get_contents('php://input'),true);
+		if(!is_array($calls))
+		{
+			throw new HttpException('invalide input',403);
+		}
 		$result = array();
 		foreach($calls as $call)
 		{
@@ -111,7 +127,7 @@ class Server
 		throw new HttpException("$classname->$method is not public",403);
 	}
 
-	function getClasses($namespace='classes')
+	function getClasses($namespace)
 	{
 		$js = '';
 		foreach($this->allowedMethods as $classname=>$methods)
@@ -133,7 +149,14 @@ class Server
 			}
 			$js .= "ns.$classname=invoker.getClass({name:'$classname',staticMethods:['".implode("','",$staticMethods)."'],methods:['".implode("','",$nonStaticMethods)."']});";
 		}
-		return '(function(){ns={};'.$js."this.$namespace=ns})()";
+		return '(function(){ns={};'.$js."invoker.$namespace=ns})()";
+	}
+
+	function getScript($namespace)
+	{
+		$classes = $this->getClasses($namespace);
+		$script = file_get_contents(__DIR__ . '/invoker.js');
+		return $script.$classes;
 	}
 
 	function response($response)

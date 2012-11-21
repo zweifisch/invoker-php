@@ -1,8 +1,8 @@
 should = chai.should()
 mocha.setup 'bdd'
 
-{User,Path} = classes
 {batch,invoke} = invoker
+{User,Path} = invoker.classes
 
 describe 'User',->
 

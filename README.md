@@ -19,4 +19,4 @@ composer install
 php -S localhost:1212 index.php
 ```
 
-visit http://localhost:1212
+visit [http://localhost:1212](http://localhost:1212)
