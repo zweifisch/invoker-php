@@ -4,8 +4,10 @@ php backend for [invoker](https://github.com/zweifisch/invoker)
 install using [composer](http://getcomposer.org/)
 
 ```javascript
-"require": {
-  "zweifisch/invoker": "*"
+{
+  "require": {
+    "zweifisch/invoker": "*"
+  }
 }
 ```
 
